@@ -1,4 +1,3 @@
-// Server side implementation of UDP client-server model
 #include <iostream>
 #include <stdlib.h>
 #include <unistd.h>
@@ -10,15 +9,18 @@
 
 #define MSG_CONFIRM 0
 
-#define PORT 8080
+#define PORT 8080 // Art-Net uses port 6454
 #define MAXLINE 1024
+
+// Art-Net packet constants
+const char ART_NET_ID[] = "Art-Net";
+const uint16_t ART_DMX_OPCODE = 0x5000;
 
 // Driver code
 int main()
 {
     int sockfd;
-    char buffer[MAXLINE];
-    const char *hello = "Hello from server";
+    uint8_t buffer[MAXLINE];
     struct sockaddr_in servaddr, cliaddr;
 
     // Creating socket file descriptor
@@ -49,19 +51,56 @@ int main()
 
     len = sizeof(cliaddr); // len is value/result
 
-    int bytesRead = 0;
     while (true)
     {
-        n = recvfrom(sockfd, (char *)buffer, MAXLINE,
+        // Clear the buffer to ensure no stale data is processed
+        memset(buffer, 0, MAXLINE);
+
+        n = recvfrom(sockfd, buffer, MAXLINE,
                      MSG_WAITALL, (struct sockaddr *)&cliaddr,
                      &len);
-        buffer[n] = '\0';
-        std::cout << "Client : " << buffer << std::endl;
-        sendto(sockfd, (const char *)hello, strlen(hello),
-               MSG_CONFIRM, (const struct sockaddr *)&cliaddr,
-               len);
-        bytesRead++;
+
+        if (n > 0)
+        {
+            // Check for Art-Net ID
+            if (memcmp(buffer, ART_NET_ID, sizeof(ART_NET_ID) - 1) == 0)
+            {
+                // Extract OpCode
+                uint16_t opcode = buffer[8] | (buffer[9] << 8);
+
+                if (opcode == ART_DMX_OPCODE)
+                {
+                    // Extract DMX data length
+                    uint16_t dmx_length = buffer[17] | (buffer[16] << 8);
+
+                    // Ensure DMX length is within bounds
+                    if (dmx_length > MAXLINE - 18)
+                        dmx_length = MAXLINE - 18;
+
+                    // Print DMX data
+                    std::cout << "Received Art-Net DMX data:" << std::endl;
+                    for (int i = 0; i < dmx_length; ++i)
+                    {
+                        if (buffer[18 + i] == 0x00) // not displaying 0x00 values for better readability
+                            continue;
+                        printf("Channel %d: %02x\n", i + 1, buffer[18 + i]);
+                    }
+                }
+                else
+                {
+                    std::cerr << "Unsupported OpCode: " << std::hex << opcode << std::endl;
+                }
+            }
+            else
+            {
+                std::cerr << "Invalid Art-Net ID" << std::endl;
+            }
+        }
+        else
+        {
+            std::cerr << "Failed to receive data or connection closed" << std::endl;
+        }
     }
 
-    return 1;
+    return 0;
 }
